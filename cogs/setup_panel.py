@@ -1,7 +1,6 @@
 import re
 import csv
 import io
-import secrets
 import aiohttp
 import discord
 from discord.ext import commands
@@ -15,7 +14,6 @@ from db import (
     get_guild_config,
     get_guild_features,
     set_guild_feature,
-    add_code as db_add_code,
     get_active_trials,
     add_trial,
     VALID_KEYS,
@@ -144,85 +142,6 @@ class GenInviteModal(ui.Modal, title="🔗 สร้าง Trial Invite Link"):
             f"```\n{invite.url}\n```\n"
             f"Role: **{role.name}** | {days} วัน | ใช้ได้ {uses_text}\n\n"
             f"ส่งลิงก์นี้ให้ลูกค้า — เมื่อกดเข้า Server จะได้รับ Role อัตโนมัติเลยครับ",
-            ephemeral=True,
-        )
-
-
-class GenCodeModal(ui.Modal, title="🎟️ สร้าง Trial Code"):
-    role_id_input = ui.TextInput(
-        label="Role ID (เว้นว่างเพื่อใช้ Default Trial Role)",
-        placeholder="123456789012345678",
-        required=False,
-        style=discord.TextStyle.short,
-        max_length=25,
-    )
-    days_input = ui.TextInput(
-        label="จำนวนวัน",
-        placeholder="30",
-        required=True,
-        style=discord.TextStyle.short,
-        max_length=5,
-    )
-    max_uses_input = ui.TextInput(
-        label="จำนวนครั้งที่ใช้ได้ (default: 1)",
-        placeholder="1",
-        required=False,
-        style=discord.TextStyle.short,
-        max_length=5,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        guild_id = str(interaction.guild_id)
-
-        days_str = self.days_input.value.strip()
-        if not days_str.isdigit() or int(days_str) <= 0:
-            await interaction.response.send_message("❌ จำนวนวันต้องเป็นตัวเลขบวกครับ", ephemeral=True)
-            return
-        days = int(days_str)
-
-        max_uses_str = self.max_uses_input.value.strip() or "1"
-        if not max_uses_str.isdigit() or int(max_uses_str) <= 0:
-            await interaction.response.send_message("❌ จำนวนครั้งต้องเป็นตัวเลขบวกครับ", ephemeral=True)
-            return
-        max_uses = int(max_uses_str)
-
-        role_str = self.role_id_input.value.strip()
-        if role_str:
-            if not role_str.isdigit():
-                await interaction.response.send_message("❌ Role ID ต้องเป็นตัวเลขเท่านั้นครับ", ephemeral=True)
-                return
-            role_id = role_str
-        else:
-            cfg = await get_guild_config(guild_id)
-            role_id = cfg.get("trial_role_id")
-            if not role_id:
-                await interaction.response.send_message(
-                    "❌ ยังไม่ได้ตั้ง Default Trial Role ครับ\n"
-                    "กรุณากรอก Role ID หรือกด **🎭 Trial Role** เพื่อตั้งค่าก่อนครับ",
-                    ephemeral=True,
-                )
-                return
-
-        role = interaction.guild.get_role(int(role_id))
-        role_name = role.name if role else f"ID:{role_id}"
-
-        raw = secrets.token_urlsafe(6).upper()
-        code = "".join(c for c in raw if c.isalnum())[:8]
-
-        await db_add_code(
-            code=code,
-            guild_id=guild_id,
-            role_id=str(role_id),
-            days=days,
-            max_uses=max_uses,
-            created_by=str(interaction.user.id),
-        )
-
-        await interaction.response.send_message(
-            f"🎟️ **Trial Code สร้างแล้ว!**\n\n"
-            f"```\n{code}\n```\n"
-            f"Role: **{role_name}** | {days} วัน | ใช้ได้ {max_uses} ครั้ง\n\n"
-            f"แชร์ code นี้ให้ลูกค้ารัน `\\redeem {code}`",
             ephemeral=True,
         )
 
@@ -484,14 +403,6 @@ class SetupPanelView(ui.View):
             return
         await interaction.response.send_modal(GenInviteModal())
 
-    @ui.button(label="🎟️ สร้าง Trial Code", style=discord.ButtonStyle.success,
-               custom_id="setup_gen_code", row=0)
-    async def btn_gen_code(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ เฉพาะ Admin เท่านั้นครับ", ephemeral=True)
-            return
-        await interaction.response.send_modal(GenCodeModal())
-
     # ── Row 1: Info ──
 
     @ui.button(label="📋 Active Trials", style=discord.ButtonStyle.secondary,
@@ -571,8 +482,7 @@ class SetupPanelView(ui.View):
             "**📖 วิธีใช้งาน Setup Panel**\n\n"
             "**Row 1 — Trial System (เขียว)**\n"
             "• **🎭 Trial Role** — ตั้ง Role default สำหรับสมาชิกทดลอง\n"
-            "• **🔗 Trial Invite** — สร้าง invite link ที่ให้ Role อัตโนมัติเมื่อเข้า Server\n"
-            "• **🎟️ Trial Code** — สร้าง code ให้ลูกค้าพิมพ์ `\\redeem CODE`\n\n"
+            "• **🔗 Trial Invite** — สร้าง invite link ที่ให้ Role อัตโนมัติเมื่อเข้า Server\n\n"
             "**Row 2 — ข้อมูล (เทา)**\n"
             "• **📋 Active Trials** — ดูรายชื่อสมาชิกทดลองที่ใช้งานอยู่\n"
             "• **📥 Import** — Import จาก CSV URL\n\n"
