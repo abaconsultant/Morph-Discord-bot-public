@@ -626,12 +626,28 @@ class TrialsCog(commands.Cog):
         old_cache = self.invite_cache.get(guild.id, {})
         used_code = None
 
+        # กรณีที่ 1: invite uses เพิ่มขึ้น (multi-use invite)
         for inv in current_invites:
             old_uses = old_cache.get(inv.code, 0)
             if inv.uses > old_uses:
                 used_code = inv.code
                 print(f"🔍 Detected invite used: {used_code} (was {old_uses}, now {inv.uses})")
                 break
+
+        # กรณีที่ 2: invite หายไปจาก list เพราะถูกใช้ครบ (single-use invite)
+        if used_code is None:
+            current_codes = {inv.code for inv in current_invites}
+            for code in old_cache:
+                if code not in current_codes:
+                    # invite หายไป — เช็คว่าเป็น trial invite ไหม
+                    try:
+                        row = await get_invite(code)
+                        if row and row["active"] and row["guild_id"] == str(guild.id):
+                            used_code = code
+                            print(f"🔍 Detected vanished invite (single-use): {used_code}")
+                            break
+                    except Exception:
+                        pass
 
         # อัปเดต cache
         self.invite_cache[guild.id] = {inv.code: inv.uses for inv in current_invites}
