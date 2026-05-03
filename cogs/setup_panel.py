@@ -135,7 +135,7 @@ class GenInviteRoleView(ui.View):
         self.selected_role: discord.Role | None = None
         self.default_role_id = default_role_id
 
-    @ui.role_select(placeholder="เลือก Role... (หรือข้ามเพื่อใช้ Default)", min_values=0, max_values=1)
+    @ui.select(cls=ui.RoleSelect, placeholder="เลือก Role... (หรือข้ามเพื่อใช้ Default)", min_values=0, max_values=1)
     async def role_select(self, interaction: discord.Interaction, select: ui.RoleSelect):
         self.selected_role = select.values[0] if select.values else None
         await interaction.response.defer()
