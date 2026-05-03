@@ -43,6 +43,8 @@ class TrialsCog(commands.Cog):
         self.bot = bot
         # invite_cache: guild_id (int) → {invite_code: uses_count}
         self.invite_cache: dict[int, dict[str, int]] = {}
+        # lock ต่อ guild — ป้องกัน race condition เมื่อ 2 คน join พร้อมกัน
+        self._join_locks: dict[int, asyncio.Lock] = {}
         self.trial_expiry_check.start()
 
     def cog_unload(self):
@@ -617,6 +619,15 @@ class TrialsCog(commands.Cog):
         """ตรวจจับว่าสมาชิกใหม่ใช้ invite ไหน แล้วให้ Trial role อัตโนมัติ"""
         guild = member.guild
         print(f"📥 Member joined: {member} (guild: {guild.id})")
+
+        # Lock ต่อ guild — ป้องกัน 2 คน join พร้อมกันแล้ว handler หลังเห็น cache ที่ handler แรก update ไปแล้ว
+        if guild.id not in self._join_locks:
+            self._join_locks[guild.id] = asyncio.Lock()
+        async with self._join_locks[guild.id]:
+            await self._process_member_join(member)
+
+    async def _process_member_join(self, member: discord.Member):
+        guild = member.guild
 
         # ต้อง snapshot cache ก่อน await ใดๆ
         # เพราะ on_invite_delete อาจทำงานระหว่าง await guild.invites() และลบ invite ออกจาก cache
