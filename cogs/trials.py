@@ -12,7 +12,17 @@ from db import (
     add_code, get_code, use_code, get_active_codes, deactivate_code,
     add_invite, get_invite, use_invite, get_active_invites, deactivate_invite,
 )
-from config import sheets_service
+
+
+async def _notify_admin(guild: discord.Guild, message: str):
+    channel = guild.system_channel
+    if channel and channel.permissions_for(guild.me).send_messages:
+        await channel.send(message)
+        return
+    for ch in guild.text_channels:
+        if ch.permissions_for(guild.me).send_messages:
+            await ch.send(message)
+            return
 
 
 def _gen_code() -> str:
@@ -63,49 +73,33 @@ class TrialsCog(commands.Cog):
 
             # 3 วันก่อนหมด
             if time_left.days <= 3 and not trial["notified_3d"] and time_left.total_seconds() > 0:
-                if member:
-                    try:
-                        await member.send(
-                            f"⏰ **แจ้งเตือน:** สิทธิ์ทดลองของคุณใน **{guild.name}** จะหมดอายุใน **{time_left.days} วัน**\n"
-                            f"📅 วันหมดอายุ: {_fmt_dt(trial['expires_at'])}\n\n"
-                            "หากต้องการต่ออายุ กรุณาติดต่อ Admin ครับ"
-                        )
-                    except discord.Forbidden:
-                        pass
+                name = member.mention if member else f"<@{trial['discord_id']}>"
+                await _notify_admin(
+                    guild,
+                    f"⏰ **Trial ใกล้หมด:** {name} จะหมดอายุใน **{time_left.days} วัน** ({_fmt_dt(trial['expires_at'])})"
+                )
                 await mark_notified_3d(trial["id"])
 
             # 1 วันก่อนหมด
             if time_left.total_seconds() <= 86400 and not trial["notified_1d"] and time_left.total_seconds() > 0:
-                if member:
-                    try:
-                        await member.send(
-                            f"⚠️ **แจ้งเตือนด่วน:** สิทธิ์ทดลองของคุณใน **{guild.name}** จะหมดภายใน **24 ชั่วโมง!**\n"
-                            f"📅 วันหมดอายุ: {_fmt_dt(trial['expires_at'])}\n\n"
-                            "กรุณาติดต่อ Admin หากต้องการต่ออายุก่อนหมดสิทธิ์ครับ"
-                        )
-                    except discord.Forbidden:
-                        pass
+                name = member.mention if member else f"<@{trial['discord_id']}>"
+                await _notify_admin(
+                    guild,
+                    f"⚠️ **Trial หมดพรุ่งนี้:** {name} จะหมดภายใน 24 ชั่วโมง ({_fmt_dt(trial['expires_at'])})"
+                )
                 await mark_notified_1d(trial["id"])
 
             # หมดแล้ว → ถอน Role (+ kick ถ้าเปิด auto_kick)
             if time_left.total_seconds() <= 0:
                 auto_kick = await is_feature_enabled(trial["guild_id"], "auto_kick")
-                if member:
-                    try:
-                        await member.send(
-                            f"❌ สิทธิ์ทดลองของคุณใน **{guild.name}** หมดอายุแล้วครับ\n"
-                            + ("คุณจะถูกนำออกจาก Server อัตโนมัติครับ" if auto_kick else
-                               "หากต้องการเข้าร่วมต่อ กรุณาติดต่อ Admin ครับ")
-                        )
-                    except discord.Forbidden:
-                        pass
+                name = member.mention if member else f"<@{trial['discord_id']}>"
                 if auto_kick and member:
                     try:
                         await member.kick(reason="สิ้นสุดระยะทดลอง (auto-kick)")
+                        await _notify_admin(guild, f"🦵 **Auto-kicked:** {name} — Trial หมดอายุแล้ว")
                         print(f"🦵 Kicked {trial['discord_id']} from {trial['guild_id']} (trial expired)")
                     except Exception as e:
                         print(f"⚠️ Kick ไม่สำเร็จ {trial['discord_id']}: {e}")
-                        # fallback: ถอน role ถ้า kick ไม่ได้
                         if role and role in member.roles:
                             try:
                                 await member.remove_roles(role, reason="สิ้นสุดระยะทดลอง")
@@ -114,8 +108,11 @@ class TrialsCog(commands.Cog):
                 elif member and role and role in member.roles:
                     try:
                         await member.remove_roles(role, reason="สิ้นสุดระยะทดลอง")
+                        await _notify_admin(guild, f"❌ **Trial หมดอายุ:** {name} — ถอน Role แล้ว")
                     except Exception as e:
                         print(f"⚠️ ถอน Role ไม่สำเร็จ {trial['discord_id']}: {e}")
+                elif not member:
+                    await _notify_admin(guild, f"❌ **Trial หมดอายุ:** {name} — ออกจาก Server ไปแล้ว")
                 await mark_trial_revoked(trial["id"])
                 print(f"✅ Revoked trial for {trial['discord_id']} in guild {trial['guild_id']}")
 
