@@ -54,7 +54,7 @@ class TrialRoleModal(ui.Modal, title="🎭 ตั้งค่า Default Trial R
 
 class GenInviteModal(ui.Modal, title="🔗 สร้าง Trial Invite Link"):
     role_id_input = ui.TextInput(
-        label="Role ID (ไม่บังคับ — ปล่อยว่างใช้ Default Trial Role)",
+        label="Role ID (ไม่บังคับ — เว้นว่าง = Default)",
         placeholder="ปล่อยว่าง = ใช้ Default / ใส่ ID = ใช้ Role นั้นแทน",
         required=False,
         style=discord.TextStyle.short,
