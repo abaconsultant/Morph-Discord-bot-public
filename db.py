@@ -477,203 +477,6 @@ async def is_feature_enabled(guild_id: str, feature: str) -> bool:
     return bool(features.get(feature, 1))
 
 
-async def init_licensing_tables():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS guild_licenses (
-                guild_id      TEXT PRIMARY KEY,
-                status        TEXT DEFAULT 'active',
-                days          INTEGER,
-                activated_at  TEXT,
-                expires_at    TEXT,
-                notified_3d   INTEGER DEFAULT 0,
-                notified_1d   INTEGER DEFAULT 0,
-                notes         TEXT
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS license_tokens (
-                token         TEXT PRIMARY KEY,
-                days          INTEGER NOT NULL,
-                max_uses      INTEGER DEFAULT 1,
-                uses          INTEGER DEFAULT 0,
-                created_by    TEXT NOT NULL,
-                created_at    TEXT NOT NULL,
-                active        INTEGER DEFAULT 1,
-                notes         TEXT
-            )
-        """)
-        await db.commit()
-
-
-async def get_guild_license(guild_id: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM guild_licenses WHERE guild_id=?", (str(guild_id),)
-        ) as cursor:
-            row = await cursor.fetchone()
-    return dict(row) if row else None
-
-
-async def upsert_guild_license(guild_id: str, days: int, notes: str = None):
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc)
-    activated_at = now.isoformat()
-    expires_at = (now + timedelta(days=days)).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO guild_licenses
-                (guild_id, status, days, activated_at, expires_at, notified_3d, notified_1d, notes)
-            VALUES (?, 'active', ?, ?, ?, 0, 0, ?)
-            ON CONFLICT(guild_id) DO UPDATE SET
-                status='active', days=excluded.days,
-                activated_at=excluded.activated_at, expires_at=excluded.expires_at,
-                notified_3d=0, notified_1d=0, notes=excluded.notes
-        """, (guild_id, days, activated_at, expires_at, notes))
-        await db.commit()
-
-
-async def extend_guild_license(guild_id: str, days: int):
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc)
-    existing = await get_guild_license(guild_id)
-    if not existing or not existing.get("expires_at"):
-        await upsert_guild_license(guild_id, days)
-        return
-    try:
-        current = datetime.fromisoformat(existing["expires_at"])
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=timezone.utc)
-        base = max(current, now)
-    except Exception:
-        base = now
-    new_expires = (base + timedelta(days=days)).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE guild_licenses SET expires_at=?, status='active', notified_3d=0, notified_1d=0 WHERE guild_id=?",
-            (new_expires, guild_id),
-        )
-        await db.commit()
-
-
-async def revoke_guild_license(guild_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE guild_licenses SET status='revoked' WHERE guild_id=?", (guild_id,)
-        )
-        await db.commit()
-
-
-async def mark_license_notified_3d(guild_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE guild_licenses SET notified_3d=1 WHERE guild_id=?", (guild_id,))
-        await db.commit()
-
-
-async def mark_license_notified_1d(guild_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE guild_licenses SET notified_1d=1 WHERE guild_id=?", (guild_id,))
-        await db.commit()
-
-
-async def mark_license_expired(guild_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE guild_licenses SET status='expired' WHERE guild_id=?", (guild_id,)
-        )
-        await db.commit()
-
-
-async def get_all_licenses() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM guild_licenses ORDER BY expires_at"
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
-
-
-async def is_guild_licensed(guild_id: str) -> bool:
-    from datetime import datetime, timezone
-    lic = await get_guild_license(guild_id)
-    if not lic or lic["status"] != "active":
-        return False
-    if not lic["expires_at"]:
-        return True  # No expiry = unlimited
-    now = datetime.now(timezone.utc)
-    try:
-        expires = datetime.fromisoformat(lic["expires_at"])
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return expires > now
-    except Exception:
-        return False
-
-
-# ──────────────────────────────────────────
-# License Tokens
-# ──────────────────────────────────────────
-
-async def add_license_token(
-    token: str, days: int, created_by: str,
-    max_uses: int = 1, notes: str = None,
-):
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO license_tokens (token, days, max_uses, created_by, created_at, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (token, days, max_uses, created_by, now, notes))
-        await db.commit()
-
-
-async def get_license_token(token: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM license_tokens WHERE token=?", (token.upper(),)
-        ) as cursor:
-            row = await cursor.fetchone()
-    return dict(row) if row else None
-
-
-async def consume_license_token(token: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT uses, max_uses FROM license_tokens WHERE token=?", (token.upper(),)
-        ) as cursor:
-            row = await cursor.fetchone()
-        if row:
-            new_uses = row[0] + 1
-            new_active = 0 if new_uses >= row[1] else 1
-            await db.execute(
-                "UPDATE license_tokens SET uses=?, active=? WHERE token=?",
-                (new_uses, new_active, token.upper()),
-            )
-            await db.commit()
-
-
-async def get_active_license_tokens() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM license_tokens WHERE active=1 ORDER BY created_at DESC"
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
-
-
-async def deactivate_license_token(token: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE license_tokens SET active=0 WHERE token=?", (token.upper(),)
-        )
-        await db.commit()
-
-
 # ──────────────────────────────────────────
 # User Activity Tracking
 # ──────────────────────────────────────────
@@ -912,22 +715,17 @@ async def get_guilds_overview() -> list[dict]:
             "SELECT guild_id, guild_name, updated_at FROM guild_configs ORDER BY updated_at DESC"
         ) as c:
             config_rows = {r["guild_id"]: dict(r) for r in await c.fetchall()}
-        async with db.execute("SELECT guild_id, status, expires_at FROM guild_licenses") as c:
-            license_rows = {r["guild_id"]: dict(r) for r in await c.fetchall()}
         async with db.execute(
             "SELECT guild_id, COUNT(*) as cnt FROM trial_members WHERE revoked=0 GROUP BY guild_id"
         ) as c:
             trial_counts = {r["guild_id"]: r["cnt"] for r in await c.fetchall()}
 
-    all_guild_ids = set(config_rows) | set(license_rows)
     result = []
-    for gid in all_guild_ids:
+    for gid in config_rows:
         result.append({
             "guild_id": gid,
             "guild_name": config_rows.get(gid, {}).get("guild_name") or None,
-            "has_config": gid in config_rows,
-            "license_status": license_rows.get(gid, {}).get("status", "none"),
-            "license_expires_at": license_rows.get(gid, {}).get("expires_at"),
+            "has_config": True,
             "active_trials": trial_counts.get(gid, 0),
         })
     return sorted(result, key=lambda x: (x["guild_name"] or x["guild_id"]))

@@ -344,141 +344,6 @@ async def is_feature_enabled(guild_id: str, feature: str) -> bool:
 
 
 # ──────────────────────────────────────────
-# Guild Licenses
-# ──────────────────────────────────────────
-
-async def get_guild_license(guild_id: str) -> dict | None:
-    pool = await _get_pool()
-    row = await pool.fetchrow("SELECT * FROM guild_licenses WHERE guild_id=$1", str(guild_id))
-    return _row(row)
-
-
-async def upsert_guild_license(guild_id: str, days: int, notes: str = None):
-    now = datetime.now(timezone.utc)
-    activated_at = now.isoformat()
-    expires_at = (now + timedelta(days=days)).isoformat()
-    pool = await _get_pool()
-    await pool.execute("""
-        INSERT INTO guild_licenses
-            (guild_id, status, days, activated_at, expires_at, notified_3d, notified_1d, notes)
-        VALUES ($1, 'active', $2, $3, $4, 0, 0, $5)
-        ON CONFLICT(guild_id) DO UPDATE SET
-            status='active', days=$2, activated_at=$3, expires_at=$4,
-            notified_3d=0, notified_1d=0, notes=$5
-    """, guild_id, days, activated_at, expires_at, notes)
-
-
-async def extend_guild_license(guild_id: str, days: int):
-    now = datetime.now(timezone.utc)
-    existing = await get_guild_license(guild_id)
-    if not existing or not existing.get("expires_at"):
-        await upsert_guild_license(guild_id, days)
-        return
-    try:
-        current = datetime.fromisoformat(existing["expires_at"])
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=timezone.utc)
-        base = max(current, now)
-    except Exception:
-        base = now
-    new_expires = (base + timedelta(days=days)).isoformat()
-    pool = await _get_pool()
-    await pool.execute(
-        "UPDATE guild_licenses SET expires_at=$1, status='active', notified_3d=0, notified_1d=0 WHERE guild_id=$2",
-        new_expires, guild_id,
-    )
-
-
-async def revoke_guild_license(guild_id: str):
-    pool = await _get_pool()
-    await pool.execute("UPDATE guild_licenses SET status='revoked' WHERE guild_id=$1", guild_id)
-
-
-async def mark_license_notified_3d(guild_id: str):
-    pool = await _get_pool()
-    await pool.execute("UPDATE guild_licenses SET notified_3d=1 WHERE guild_id=$1", guild_id)
-
-
-async def mark_license_notified_1d(guild_id: str):
-    pool = await _get_pool()
-    await pool.execute("UPDATE guild_licenses SET notified_1d=1 WHERE guild_id=$1", guild_id)
-
-
-async def mark_license_expired(guild_id: str):
-    pool = await _get_pool()
-    await pool.execute("UPDATE guild_licenses SET status='expired' WHERE guild_id=$1", guild_id)
-
-
-async def get_all_licenses() -> list[dict]:
-    pool = await _get_pool()
-    rows = await pool.fetch("SELECT * FROM guild_licenses ORDER BY expires_at")
-    return _rows(rows)
-
-
-async def is_guild_licensed(guild_id: str) -> bool:
-    lic = await get_guild_license(guild_id)
-    if not lic or lic["status"] != "active":
-        return False
-    if not lic["expires_at"]:
-        return True
-    now = datetime.now(timezone.utc)
-    try:
-        expires = datetime.fromisoformat(lic["expires_at"])
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return expires > now
-    except Exception:
-        return False
-
-
-# ──────────────────────────────────────────
-# License Tokens
-# ──────────────────────────────────────────
-
-async def add_license_token(token: str, days: int, created_by: str, max_uses: int = 1, notes: str = None):
-    now = datetime.now(timezone.utc).isoformat()
-    pool = await _get_pool()
-    await pool.execute("""
-        INSERT INTO license_tokens (token, days, max_uses, created_by, created_at, notes)
-        VALUES ($1, $2, $3, $4, $5, $6)
-    """, token, days, max_uses, created_by, now, notes)
-
-
-async def get_license_token(token: str) -> dict | None:
-    pool = await _get_pool()
-    row = await pool.fetchrow("SELECT * FROM license_tokens WHERE token=$1", token.upper())
-    return _row(row)
-
-
-async def consume_license_token(token: str):
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT uses, max_uses FROM license_tokens WHERE token=$1", token.upper()
-        )
-        if row:
-            new_uses = row["uses"] + 1
-            new_active = 0 if new_uses >= row["max_uses"] else 1
-            await conn.execute(
-                "UPDATE license_tokens SET uses=$1, active=$2 WHERE token=$3",
-                new_uses, new_active, token.upper(),
-            )
-
-
-async def get_active_license_tokens() -> list[dict]:
-    pool = await _get_pool()
-    rows = await pool.fetch(
-        "SELECT * FROM license_tokens WHERE active=1 ORDER BY created_at DESC"
-    )
-    return _rows(rows)
-
-
-async def deactivate_license_token(token: str):
-    pool = await _get_pool()
-    await pool.execute("UPDATE license_tokens SET active=0 WHERE token=$1", token.upper())
-
-
-# ──────────────────────────────────────────
 # User Activity
 # ──────────────────────────────────────────
 
@@ -613,21 +478,15 @@ async def get_guilds_overview() -> list[dict]:
     config_rows = {r["guild_id"]: dict(r) for r in await pool.fetch(
         "SELECT guild_id, guild_name, updated_at FROM guild_configs ORDER BY updated_at DESC"
     )}
-    license_rows = {r["guild_id"]: dict(r) for r in await pool.fetch(
-        "SELECT guild_id, status, expires_at FROM guild_licenses"
-    )}
     trial_counts = {r["guild_id"]: r["cnt"] for r in await pool.fetch(
         "SELECT guild_id, COUNT(*) as cnt FROM trial_members WHERE revoked=0 GROUP BY guild_id"
     )}
-    all_guild_ids = set(config_rows) | set(license_rows)
     result = []
-    for gid in all_guild_ids:
+    for gid in config_rows:
         result.append({
             "guild_id": gid,
             "guild_name": config_rows.get(gid, {}).get("guild_name") or None,
-            "has_config": gid in config_rows,
-            "license_status": license_rows.get(gid, {}).get("status", "none"),
-            "license_expires_at": license_rows.get(gid, {}).get("expires_at"),
+            "has_config": True,
             "active_trials": trial_counts.get(gid, 0),
         })
     return sorted(result, key=lambda x: (x["guild_name"] or x["guild_id"]))

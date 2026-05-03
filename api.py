@@ -13,7 +13,6 @@ from db import (
     get_active_trials, mark_trial_revoked,
     get_active_codes, deactivate_code,
     get_active_invites, deactivate_invite,
-    get_all_licenses, get_guild_license,
     get_guild_config, set_guild_config_field, reset_guild_config,
     get_guild_features, set_guild_feature,
     set_guild_name,
@@ -53,11 +52,8 @@ def require_auth(x_api_token: str = Header(...)):
 @app.get("/api/status", dependencies=[Depends(require_auth)])
 async def get_status():
     trials = await get_active_trials()
-    licenses = await get_all_licenses()
-    active_licenses = [l for l in licenses if l["status"] == "active"]
     guild_count, active_codes = await count_configs_and_codes()
 
-    # trials expiring soon (within 3 days)
     now = datetime.now(timezone.utc)
     expiring_soon = 0
     for t in trials:
@@ -74,7 +70,6 @@ async def get_status():
     return {
         "active_trials": len(trials),
         "expiring_soon": expiring_soon,
-        "active_licenses": len(active_licenses),
         "total_guilds": guild_count,
         "active_codes": active_codes,
         "timestamp": now.isoformat(),
@@ -140,35 +135,6 @@ async def list_invites(guild_id: str | None = None):
 async def disable_invite(invite_code: str):
     await deactivate_invite(invite_code)
     return {"ok": True, "invite_code": invite_code}
-
-
-# ──────────────────────────────────────────
-# Licenses
-# ──────────────────────────────────────────
-
-@app.get("/api/licenses", dependencies=[Depends(require_auth)])
-async def list_licenses():
-    licenses = await get_all_licenses()
-    now = datetime.now(timezone.utc)
-    result = []
-    for lic in licenses:
-        try:
-            exp = datetime.fromisoformat(lic["expires_at"]) if lic.get("expires_at") else None
-            if exp and exp.tzinfo is None:
-                exp = exp.replace(tzinfo=timezone.utc)
-            days_left = max(0, int((exp - now).total_seconds() / 86400)) if exp else None
-        except Exception:
-            days_left = None
-        result.append({**lic, "days_left": days_left})
-    return result
-
-
-@app.get("/api/licenses/{guild_id}", dependencies=[Depends(require_auth)])
-async def get_license(guild_id: str):
-    lic = await get_guild_license(guild_id)
-    if not lic:
-        raise HTTPException(404, "License not found")
-    return lic
 
 
 # ──────────────────────────────────────────

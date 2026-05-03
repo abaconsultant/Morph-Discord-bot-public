@@ -83,30 +83,6 @@ CREATE TABLE IF NOT EXISTS trial_invites (
 
 CREATE INDEX IF NOT EXISTS idx_trial_invites_guild ON trial_invites(guild_id, active);
 
--- Guild licenses
-CREATE TABLE IF NOT EXISTS guild_licenses (
-    guild_id      TEXT PRIMARY KEY,
-    status        TEXT DEFAULT 'active',
-    days          INTEGER,
-    activated_at  TEXT,
-    expires_at    TEXT,
-    notified_3d   INTEGER DEFAULT 0,
-    notified_1d   INTEGER DEFAULT 0,
-    notes         TEXT
-);
-
--- License tokens
-CREATE TABLE IF NOT EXISTS license_tokens (
-    token         TEXT PRIMARY KEY,
-    days          INTEGER NOT NULL,
-    max_uses      INTEGER DEFAULT 1,
-    uses          INTEGER DEFAULT 0,
-    created_by    TEXT NOT NULL,
-    created_at    TEXT NOT NULL,
-    active        INTEGER DEFAULT 1,
-    notes         TEXT
-);
-
 -- User activity tracking
 CREATE TABLE IF NOT EXISTS user_activity (
     guild_id    TEXT NOT NULL,
@@ -151,8 +127,6 @@ ALTER TABLE guild_features    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trial_members     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trial_codes       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trial_invites     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE guild_licenses    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE license_tokens    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_activity     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_reminders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE course_links      ENABLE ROW LEVEL SECURITY;
