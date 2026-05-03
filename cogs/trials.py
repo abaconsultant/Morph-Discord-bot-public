@@ -45,6 +45,9 @@ class TrialsCog(commands.Cog):
         self.invite_cache: dict[int, dict[str, int]] = {}
         # lock ต่อ guild — ป้องกัน race condition เมื่อ 2 คน join พร้อมกัน
         self._join_locks: dict[int, asyncio.Lock] = {}
+        # pending members (Membership Screening) — guild_id → {member_id: invite_code}
+        # เก็บไว้รอจนกว่าสมาชิกจะกด Agree Rules แล้วค่อยให้ Role
+        self._pending_members: dict[int, dict[int, str]] = {}
         self.trial_expiry_check.start()
 
     def cog_unload(self):
@@ -695,6 +698,12 @@ class TrialsCog(commands.Cog):
             print(f"❌ Role {row['role_id']} not found in guild {guild.id}")
             return
 
+        # ถ้า Membership Screening เปิดอยู่ → member.pending=True → รอให้กด Agree ก่อน
+        if member.pending:
+            self._pending_members.setdefault(guild.id, {})[member.id] = used_code
+            print(f"⏳ Member {member} is pending (Membership Screening) — waiting for Agree")
+            return
+
         print(f"🎯 Granting role {role.name} to {member} via invite {used_code}")
 
         # ให้ Role
@@ -735,6 +744,65 @@ class TrialsCog(commands.Cog):
 
         await _notify_admin(guild, f"✅ **Trial ใหม่:** {member.mention} — Role **{role.name}** | {row['days']} วัน (invite `{used_code}`)")
         print(f"✅ Trial granted to {member} via invite {used_code} ({row['days']} วัน)")
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        """จัดการ Membership Screening — ให้ Role เมื่อสมาชิกกด Agree Rules"""
+        if not (before.pending and not after.pending):
+            return
+
+        guild = after.guild
+        pending = self._pending_members.get(guild.id, {})
+        used_code = pending.pop(after.id, None)
+        if used_code is None:
+            return
+
+        try:
+            row = await get_invite(used_code)
+        except Exception as e:
+            print(f"❌ get_invite failed for pending member {after}: {e}")
+            return
+
+        if not row or not row["active"] or row["guild_id"] != str(guild.id):
+            return
+
+        role = guild.get_role(int(row["role_id"]))
+        if role is None:
+            return
+
+        print(f"🎯 Membership Screening passed — granting {role.name} to {after}")
+        try:
+            await after.add_roles(role, reason=f"Trial invite {used_code} (ผ่าน Rules Screening)")
+        except Exception as e:
+            print(f"❌ add_roles failed (post-screening) for {after}: {e}")
+            await _notify_admin(guild, f"❌ **ให้ Role ไม่สำเร็จ:** {after.mention} — {e}")
+            return
+
+        try:
+            await add_trial(
+                guild_id=str(guild.id),
+                discord_id=str(after.id),
+                role_id=str(role.id),
+                days=row["days"],
+                source="invite",
+                code=used_code,
+            )
+            await use_invite(used_code)
+        except Exception as e:
+            print(f"❌ Failed to save trial record (post-screening) for {after}: {e}")
+
+        expires = datetime.now(timezone.utc) + timedelta(days=row["days"])
+        try:
+            await after.send(
+                f"🎉 ยินดีต้อนรับสู่ **{guild.name}**!\n\n"
+                f"คุณได้รับสิทธิ์ทดลอง Role **{role.name}** เป็นเวลา **{row['days']} วัน**\n"
+                f"📅 หมดอายุ: {expires.strftime('%d/%m/%Y %H:%M UTC')}\n\n"
+                "บอทจะแจ้งเตือนคุณ 3 วันและ 1 วันก่อนหมดอายุครับ 👍"
+            )
+        except discord.Forbidden:
+            pass
+
+        await _notify_admin(guild, f"✅ **Trial ใหม่:** {after.mention} — Role **{role.name}** | {row['days']} วัน (invite `{used_code}`)")
 
     # ──────────────────────────────────────────
     # Admin: gen_invite
