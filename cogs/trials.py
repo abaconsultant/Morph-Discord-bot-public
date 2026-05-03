@@ -604,6 +604,7 @@ class TrialsCog(commands.Cog):
         """อัปเดต cache เมื่อมี invite ใหม่"""
         guild_cache = self.invite_cache.setdefault(invite.guild.id, {})
         guild_cache[invite.code] = invite.uses or 0
+        print(f"📨 on_invite_create: {invite.code} (guild {invite.guild.id}) — cache now has {len(guild_cache)} invites")
 
     @commands.Cog.listener()
     async def on_invite_delete(self, invite: discord.Invite):
@@ -625,6 +626,8 @@ class TrialsCog(commands.Cog):
 
         old_cache = self.invite_cache.get(guild.id, {})
         used_code = None
+        print(f"🔎 Cache has {len(old_cache)} invites: {list(old_cache.keys())}")
+        print(f"🔎 Discord reports {len(current_invites)} invites: {[inv.code for inv in current_invites]}")
 
         # กรณีที่ 1: invite uses เพิ่มขึ้น (multi-use invite)
         for inv in current_invites:
