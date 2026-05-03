@@ -615,10 +615,12 @@ class TrialsCog(commands.Cog):
     async def on_member_join(self, member: discord.Member):
         """ตรวจจับว่าสมาชิกใหม่ใช้ invite ไหน แล้วให้ Trial role อัตโนมัติ"""
         guild = member.guild
+        print(f"📥 Member joined: {member} (guild: {guild.id})")
 
         try:
             current_invites = await guild.invites()
         except discord.Forbidden:
+            print(f"⚠️ No permission to fetch invites for guild {guild.id}")
             return
 
         old_cache = self.invite_cache.get(guild.id, {})
@@ -628,39 +630,64 @@ class TrialsCog(commands.Cog):
             old_uses = old_cache.get(inv.code, 0)
             if inv.uses > old_uses:
                 used_code = inv.code
+                print(f"🔍 Detected invite used: {used_code} (was {old_uses}, now {inv.uses})")
                 break
 
         # อัปเดต cache
         self.invite_cache[guild.id] = {inv.code: inv.uses for inv in current_invites}
 
         if used_code is None:
+            print(f"ℹ️ No invite change detected for {member} — not a trial invite or cache miss")
             return
 
         # เช็คว่า invite นี้ผูกกับ trial หรือเปล่า
-        row = await get_invite(used_code)
-        if not row or not row["active"] or row["guild_id"] != str(guild.id):
+        try:
+            row = await get_invite(used_code)
+        except Exception as e:
+            print(f"❌ get_invite failed for {used_code}: {e}")
+            return
+
+        if not row:
+            print(f"ℹ️ Invite {used_code} not in trial_invites DB — skipping")
+            return
+        if not row["active"]:
+            print(f"ℹ️ Invite {used_code} is inactive — skipping")
+            return
+        if row["guild_id"] != str(guild.id):
+            print(f"ℹ️ Invite {used_code} belongs to different guild — skipping")
             return
 
         role = guild.get_role(int(row["role_id"]))
         if role is None:
+            print(f"❌ Role {row['role_id']} not found in guild {guild.id}")
             return
 
-        # ให้ Role + บันทึก trial
+        print(f"🎯 Granting role {role.name} to {member} via invite {used_code}")
+
+        # ให้ Role
         try:
             await member.add_roles(role, reason=f"Trial invite {used_code} ({row['days']} วัน)")
         except Exception as e:
-            print(f"⚠️ add_roles failed for {member}: {e}")
+            print(f"❌ add_roles failed for {member}: {e}")
+            await _notify_admin(guild, f"❌ **ให้ Role ไม่สำเร็จ:** {member.mention} — {e}\n"
+                                       f"ตรวจสอบว่า Role ของบอทอยู่ **เหนือ** Trial Role ครับ")
             return
 
-        await add_trial(
-            guild_id=str(guild.id),
-            discord_id=str(member.id),
-            role_id=str(role.id),
-            days=row["days"],
-            source="invite",
-            code=used_code,
-        )
-        await use_invite(used_code)
+        # บันทึก trial ลง DB
+        try:
+            await add_trial(
+                guild_id=str(guild.id),
+                discord_id=str(member.id),
+                role_id=str(role.id),
+                days=row["days"],
+                source="invite",
+                code=used_code,
+            )
+            await use_invite(used_code)
+        except Exception as e:
+            print(f"❌ Failed to save trial record for {member}: {e}")
+            await _notify_admin(guild, f"⚠️ **บันทึก Trial ไม่สำเร็จ:** {member.mention} — ได้รับ Role แล้วแต่บันทึก DB ล้มเหลว: {e}")
+            return
 
         expires = datetime.now(timezone.utc) + timedelta(days=row["days"])
         try:
@@ -673,6 +700,7 @@ class TrialsCog(commands.Cog):
         except discord.Forbidden:
             pass
 
+        await _notify_admin(guild, f"✅ **Trial ใหม่:** {member.mention} — Role **{role.name}** | {row['days']} วัน (invite `{used_code}`)")
         print(f"✅ Trial granted to {member} via invite {used_code} ({row['days']} วัน)")
 
     # ──────────────────────────────────────────
