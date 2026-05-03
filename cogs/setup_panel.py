@@ -16,6 +16,8 @@ from db import (
     set_guild_feature,
     get_active_trials,
     add_trial,
+    get_active_invites,
+    deactivate_invite,
     VALID_KEYS,
 )
 
@@ -366,9 +368,14 @@ class ResetConfirmView(ui.View):
 
     @ui.button(label="✅ ยืนยัน Reset", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: ui.Button):
-        await reset_guild_config(str(interaction.guild_id))
+        guild_id = str(interaction.guild_id)
+        await reset_guild_config(guild_id)
+        # ปิด trial invites ทั้งหมดของ guild นี้
+        invites = await get_active_invites(guild_id)
+        for inv in invites:
+            await deactivate_invite(inv["invite_code"])
         await interaction.response.edit_message(
-            content="✅ รีเซ็ต Config ของ Server นี้แล้วครับ",
+            content=f"✅ รีเซ็ต Config ของ Server นี้แล้วครับ (ปิด invite link {len(invites)} รายการ)",
             view=None,
         )
 
@@ -385,6 +392,15 @@ class SetupPanelView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
+        print(f"❌ SetupPanelView error on {item.custom_id}: {type(error).__name__}: {error}")
+        import traceback
+        traceback.print_exc()
+        try:
+            await interaction.response.send_message(f"❌ Error: {error}", ephemeral=True)
+        except Exception:
+            pass
+
     # ── Row 0: Trial System ──
 
     @ui.button(label="🎭 Trial Role", style=discord.ButtonStyle.success,
@@ -398,6 +414,7 @@ class SetupPanelView(ui.View):
     @ui.button(label="🔗 สร้าง Trial Invite", style=discord.ButtonStyle.success,
                custom_id="setup_gen_invite", row=0)
     async def btn_gen_invite(self, interaction: discord.Interaction, button: ui.Button):
+        print(f"🔘 btn_gen_invite clicked by {interaction.user} in guild {interaction.guild_id}")
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ เฉพาะ Admin เท่านั้นครับ", ephemeral=True)
             return
