@@ -52,14 +52,7 @@ class TrialRoleModal(ui.Modal, title="🎭 ตั้งค่า Default Trial R
         )
 
 
-class GenInviteModal(ui.Modal, title="🔗 สร้าง Trial Invite Link"):
-    role_id_input = ui.TextInput(
-        label="Role ID (ไม่บังคับ — เว้นว่าง = Default)",
-        placeholder="ปล่อยว่าง = ใช้ Default / ใส่ ID = ใช้ Role นั้นแทน",
-        required=False,
-        style=discord.TextStyle.short,
-        max_length=25,
-    )
+class GenInviteDetailsModal(ui.Modal, title="🔗 ตั้งค่า Trial Invite"):
     days_input = ui.TextInput(
         label="จำนวนวัน",
         placeholder="30",
@@ -74,6 +67,11 @@ class GenInviteModal(ui.Modal, title="🔗 สร้าง Trial Invite Link"):
         style=discord.TextStyle.short,
         max_length=5,
     )
+
+    def __init__(self, role_id: str, role_name: str):
+        super().__init__()
+        self.role_id = role_id
+        self.role_name = role_name
 
     async def on_submit(self, interaction: discord.Interaction):
         guild_id = str(interaction.guild_id)
@@ -90,24 +88,7 @@ class GenInviteModal(ui.Modal, title="🔗 สร้าง Trial Invite Link"):
             return
         max_uses = int(max_uses_str)
 
-        role_str = self.role_id_input.value.strip()
-        if role_str:
-            if not role_str.isdigit():
-                await interaction.response.send_message("❌ Role ID ต้องเป็นตัวเลขเท่านั้นครับ", ephemeral=True)
-                return
-            role_id = role_str
-        else:
-            cfg = await get_guild_config(guild_id)
-            role_id = cfg.get("trial_role_id")
-            if not role_id:
-                await interaction.response.send_message(
-                    "❌ ยังไม่ได้ตั้ง Default Trial Role ครับ\n"
-                    "กรุณากรอก Role ID หรือกด **🎭 Trial Role** เพื่อตั้งค่าก่อนครับ",
-                    ephemeral=True,
-                )
-                return
-
-        role = interaction.guild.get_role(int(role_id))
+        role = interaction.guild.get_role(int(self.role_id))
         if role is None:
             await interaction.response.send_message("❌ ไม่พบ Role นี้ใน Server ครับ", ephemeral=True)
             return
@@ -132,7 +113,7 @@ class GenInviteModal(ui.Modal, title="🔗 สร้าง Trial Invite Link"):
             invite_code=invite.code,
             guild_id=guild_id,
             channel_id=str(interaction.channel_id),
-            role_id=role_id,
+            role_id=self.role_id,
             days=days,
             max_uses=max_uses,
             created_by=str(interaction.user.id),
@@ -145,6 +126,33 @@ class GenInviteModal(ui.Modal, title="🔗 สร้าง Trial Invite Link"):
             f"Role: **{role.name}** | {days} วัน | ใช้ได้ {uses_text}\n\n"
             f"ส่งลิงก์นี้ให้ลูกค้า — เมื่อกดเข้า Server จะได้รับ Role อัตโนมัติเลยครับ",
             ephemeral=True,
+        )
+
+
+class GenInviteRoleView(ui.View):
+    def __init__(self, default_role_id: str | None = None):
+        super().__init__(timeout=60)
+        self.selected_role: discord.Role | None = None
+        self.default_role_id = default_role_id
+
+    @ui.role_select(placeholder="เลือก Role... (หรือข้ามเพื่อใช้ Default)", min_values=0, max_values=1)
+    async def role_select(self, interaction: discord.Interaction, select: ui.RoleSelect):
+        self.selected_role = select.values[0] if select.values else None
+        await interaction.response.defer()
+
+    @ui.button(label="🔗 สร้าง Invite", style=discord.ButtonStyle.success, row=1)
+    async def confirm(self, interaction: discord.Interaction, button: ui.Button):
+        role = self.selected_role
+        if role is None and self.default_role_id:
+            role = interaction.guild.get_role(int(self.default_role_id))
+        if role is None:
+            await interaction.response.send_message(
+                "❌ กรุณาเลือก Role ก่อนครับ หรือตั้ง Default ด้วยปุ่ม 🎭 Trial Role",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(
+            GenInviteDetailsModal(role_id=str(role.id), role_name=role.name)
         )
 
 
@@ -418,7 +426,16 @@ class SetupPanelView(ui.View):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ เฉพาะ Admin เท่านั้นครับ", ephemeral=True)
             return
-        await interaction.response.send_modal(GenInviteModal())
+        await interaction.response.defer(ephemeral=True)
+        cfg = await get_guild_config(str(interaction.guild_id))
+        default_role_id = cfg.get("trial_role_id")
+        view = GenInviteRoleView(default_role_id=default_role_id)
+        msg = "**🔗 สร้าง Trial Invite**\n\nเลือก Role จาก dropdown แล้วกด **สร้าง Invite**"
+        if default_role_id:
+            role = interaction.guild.get_role(int(default_role_id))
+            if role:
+                msg += f"\n*(ไม่เลือก = ใช้ Default: **{role.name}**)*"
+        await interaction.followup.send(msg, view=view, ephemeral=True)
 
     # ── Row 1: Info ──
 
