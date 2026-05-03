@@ -480,6 +480,20 @@ class SetupPanelView(ui.View):
             return
         await interaction.response.send_modal(ImportRegistrationModal())
 
+    @ui.button(label="⚡ Force Trial Check", style=discord.ButtonStyle.secondary,
+               custom_id="setup_force_trial_check", row=1)
+    async def btn_force_trial_check(self, interaction: discord.Interaction, button: ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ เฉพาะ Admin เท่านั้นครับ", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        cog = interaction.client.get_cog("TrialsCog")
+        if cog is None:
+            await interaction.followup.send("❌ ไม่พบ TrialsCog ครับ", ephemeral=True)
+            return
+        await cog.trial_expiry_check()
+        await interaction.followup.send("✅ Trial check เสร็จแล้วครับ — ดู log สำหรับรายละเอียด", ephemeral=True)
+
     # ── Row 2: Management ──
 
     @ui.button(label="🔧 เปิด/ปิดฟีเจอร์", style=discord.ButtonStyle.secondary,
