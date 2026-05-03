@@ -870,6 +870,19 @@ class TrialsCog(commands.Cog):
 
         await ctx.reply(f"✅ ปิด invite `discord.gg/{invite_code}` แล้วครับ")
 
+    # ──────────────────────────────────────────
+    # Admin: force_trial_check (ทดสอบ)
+    # ──────────────────────────────────────────
+
+    @commands.command(name="force_trial_check")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def force_trial_check_cmd(self, ctx: commands.Context):
+        """รัน trial expiry check ทันที (สำหรับทดสอบ)"""
+        msg = await ctx.reply("⏳ กำลังรัน trial check...")
+        await self.trial_expiry_check()
+        await msg.edit(content="✅ Trial check เสร็จแล้วครับ — ดู log สำหรับรายละเอียด")
+
 
 async def setup(bot):
     await bot.add_cog(TrialsCog(bot))
