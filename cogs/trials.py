@@ -624,7 +624,7 @@ class TrialsCog(commands.Cog):
             print(f"⚠️ No permission to fetch invites for guild {guild.id}")
             return
 
-        old_cache = self.invite_cache.get(guild.id, {})
+        old_cache = dict(self.invite_cache.get(guild.id, {}))  # copy ก่อน await ใดๆ เพื่อกันถูก on_invite_delete แก้ระหว่างรอ
         used_code = None
         print(f"🔎 Cache has {len(old_cache)} invites: {list(old_cache.keys())}")
         print(f"🔎 Discord reports {len(current_invites)} invites: {[inv.code for inv in current_invites]}")
